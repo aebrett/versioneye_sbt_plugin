@@ -46,6 +46,7 @@ object VersionEyePlugin extends sbt.AutoPlugin {
     val trackPlugins = settingKey[Boolean]("By default the plugins who are defined in the build.sbt file are handled like regular dependencies with the \"plugin\" scope. Plugins can be ignored by setting this property to \"false\".")
     val filterScalaLangDependencies = settingKey[Boolean]("By default the scala-library dependency is not tracked. The scala-library dependency can be enabled for tracking by setting this property to \"false\".")
     val licenseCheckBreakByUnknown = settingKey[Boolean]("If this is true then the goal \"versioneye:licenseCheck\" will break the build if there is a component without any license.")
+    val scopeMappings = settingKey[Map[String, String]]("Scopes to inspect for dependencies")
     val skipScopes = settingKey[String]("Comma separated list of scopes which should be ignored by this plugin.")
     val publishCrossVersion = settingKey[Boolean]("Use scala cross version when publishing this artifact")
 
@@ -68,6 +69,13 @@ object VersionEyePlugin extends sbt.AutoPlugin {
       nameStrategy := "name",
       trackPlugins := true,
       licenseCheckBreakByUnknown := false,
+      scopeMappings := Map(
+        "compile" -> "compile",
+        "test" -> "test",
+        "runtime" -> "runtime",
+        "provided" -> "provided",
+        "optional" -> "optional"
+      ),
       skipScopes := "",
       publishCrossVersion := false
     )
@@ -121,7 +129,7 @@ object VersionEyePlugin extends sbt.AutoPlugin {
   private def jsonTask = Def.task {
     val log = streams.value.log
 
-    val scopes: List[String] = getScopes(skipScopes.value)
+    val scopes = getScopes(scopeMappings.value, skipScopes.value)
     val dependencies = dependencyArray(scopes, libraryDependencies.value, filterScalaLangDependencies.value, ivyScala.value)
     val pom = Map("name" -> getName(name.value, organization.value, description.value, nameStrategy.value),
       "group_id" -> organization.value, "artifact_id" -> getArtifactId(name.value, publishCrossVersion.value, ivyScala.value),
@@ -153,7 +161,7 @@ object VersionEyePlugin extends sbt.AutoPlugin {
     log.info("Starting to upload dependencies to " + baseUrl.value + ". This can take a couple seconds ... ")
     log.info(".")
 
-    val scopes: List[String] = getScopes(skipScopes.value)
+    val scopes = getScopes(scopeMappings.value, skipScopes.value)
     val dependencies = dependencyArray(scopes, libraryDependencies.value, filterScalaLangDependencies.value, ivyScala.value)
     val pom = Map("name" -> getName(name.value, organization.value, description.value, nameStrategy.value),
       "group_id" -> organization.value, "artifact_id" -> getArtifactId(name.value, publishCrossVersion.value, ivyScala.value),
@@ -197,7 +205,7 @@ object VersionEyePlugin extends sbt.AutoPlugin {
     log.info("Starting to upload dependencies to " + baseUrl.value + ". This can take a couple seconds ... ")
     log.info(".")
 
-    val scopes: List[String] = getScopes(skipScopes.value)
+    val scopes = getScopes(scopeMappings.value, skipScopes.value)
     val dependencies = dependencyArray(scopes, libraryDependencies.value, filterScalaLangDependencies.value, ivyScala.value)
     val pom = Map("name" -> getName(name.value, organization.value, description.value, nameStrategy.value),
       "group_id" -> organization.value, "artifact_id" -> getArtifactId(name.value, publishCrossVersion.value, ivyScala.value),
@@ -234,7 +242,7 @@ object VersionEyePlugin extends sbt.AutoPlugin {
     log.info("Starting to upload dependencies to " + baseUrl.value + " for license check. This can take a couple seconds ... ")
     log.info(".")
 
-    val scopes: List[String] = getScopes(skipScopes.value)
+    val scopes = getScopes(scopeMappings.value, skipScopes.value)
     val dependencies = dependencyArray(scopes, libraryDependencies.value, filterScalaLangDependencies.value, ivyScala.value)
     val pom = Map("name" -> getName(name.value, organization.value, description.value, nameStrategy.value),
       "group_id" -> organization.value, "artifact_id" -> getArtifactId(name.value, publishCrossVersion.value, ivyScala.value),
@@ -465,16 +473,16 @@ object VersionEyePlugin extends sbt.AutoPlugin {
     return false
   }
 
-  def dependencyArray(scopes: List[String], modules: Seq[ModuleID], filterScalaLangDependencies: Boolean, ivyScala: Option[IvyScala]): ListBuffer[Map[String, String]] = {
+  def dependencyArray(scopes: Map[String, String], modules: Seq[ModuleID], filterScalaLangDependencies: Boolean, ivyScala: Option[IvyScala]): ListBuffer[Map[String, String]] = {
     val result = ListBuffer[Map[String, String]]()
     modules.foreach(module => {
       val scope = toJsonScope(module.configurations)
 
       val crossArtifactName: String = CrossVersion.apply(module, ivyScala).map(f => f(module.name)).getOrElse(module.name)
 
-      if (scopes.contains(scope)) {
+      scopes.get(scope).foreach { mappedScope =>
         var name = module.organization + ":" + crossArtifactName
-        val map = Map("name" -> name, "version" -> module.revision, "scope" -> scope)
+        val map = Map("name" -> name, "version" -> module.revision, "scope" -> mappedScope)
         result += map
       }
     }
@@ -488,17 +496,13 @@ object VersionEyePlugin extends sbt.AutoPlugin {
   }
 
 
-  def getScopes(skipScopes: String): List[String] = {
-
-    val scopes = Seq("compile", "test", "runtime",
-      "provided", "optional")
-
+  def getScopes(scopeMappings: Map[String, String], skipScopes: String): Map[String, String] = {
     var list: List[String] = List()
     if (!skipScopes.isEmpty) {
       list = skipScopes.toLowerCase.split(",").toList
     }
 
-    return scopes.filter((scope) => !list.contains(scope)).toList
+    return scopeMappings.filterKeys((scope) => !list.contains(scope))
   }
 
   case class ProxyConfig(host: String, port: Int, username: String, password: String)
